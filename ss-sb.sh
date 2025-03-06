@@ -15,7 +15,7 @@ apt update
 
 # Cài đặt các công cụ cần thiết
 echo "===== Cài đặt các công cụ cần thiết ====="
-apt install -y curl wget unzip jq
+apt install -y curl wget unzip jq qrencode
 
 # Tạo thư mục làm việc
 WORK_DIR="/opt/singbox"
@@ -34,9 +34,9 @@ rm -rf sing-box-1.11.4-linux-amd64 singbox.tar.gz
 # Cấu hình SingBox
 echo "===== Cấu hình SingBox ====="
 
-# Tạo mật khẩu ngẫu nhiên
-PASSWORD=$(openssl rand -base64 16)
-# Chọn cổng ngẫu nhiên (1024-65535)
+# Tạo mật khẩu ngẫu nhiên (16 ký tự an toàn)
+PASSWORD=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
+# Chọn cổng ngẫu nhiên (10000-65000)
 PORT=$(shuf -i 10000-65000 -n 1)
 # Lấy địa chỉ IP công khai
 SERVER_IP=$(curl -s https://api.ipify.org)
@@ -52,7 +52,7 @@ cat > $WORK_DIR/config.json << EOF
     {
       "type": "shadowsocks",
       "tag": "ss-in",
-      "listen": "::",
+      "listen": "0.0.0.0",
       "listen_port": $PORT,
       "method": "chacha20-ietf-poly1305",
       "password": "$PASSWORD",
@@ -109,17 +109,22 @@ echo
 echo "Nhập tên cho kết nối Shadowsocks của bạn (để trống nếu không muốn đặt tên):"
 read -r SS_NAME
 
-# Tạo SS URL
+# Tạo SS URL tương thích v2ray (sử dụng định dạng chuẩn)
 METHOD="chacha20-ietf-poly1305"
-BASE64_PART=$(echo -n ${METHOD}:${PASSWORD} | base64 | tr -d '\n')
+USER_PASS="${METHOD}:${PASSWORD}"
+BASE64_PART=$(echo -n "$USER_PASS" | base64 | tr -d '\n' | tr -d '=' | tr '+/' '-_')
 
 if [ -n "$SS_NAME" ]; then
-  SS_URI="ss://${BASE64_PART}@${SERVER_IP}:${PORT}#$(echo -n $SS_NAME | jq -sRr @uri)"
+  # URL encode tên
+  ENCODED_NAME=$(echo -n "$SS_NAME" | jq -sRr @uri)
+  SS_URI="ss://${BASE64_PART}@${SERVER_IP}:${PORT}#${ENCODED_NAME}"
 else
   SS_URI="ss://${BASE64_PART}@${SERVER_IP}:${PORT}"
 fi
 
-SS_URI_QR=$(echo -n $SS_URI | base64 | tr -d '\n')
+# Tạo QR code
+QRCODE_PATH="$WORK_DIR/ss_qrcode.png"
+qrencode -s 8 -o "$QRCODE_PATH" "$SS_URI"
 
 # In thông tin
 echo
@@ -136,8 +141,6 @@ fi
 echo
 echo "URL Shadowsocks: $SS_URI"
 echo
-echo "URL QR Code: $SS_URI_QR"
-echo
 echo "Để kiểm tra trạng thái: systemctl status singbox"
 echo "Để xem logs: journalctl -u singbox -f"
 echo
@@ -150,3 +153,13 @@ if command -v ufw &> /dev/null; then
   ufw allow $PORT/udp
   echo "Đã mở cổng $PORT trên UFW firewall"
 fi
+
+# Hiển thị thông tin QR code
+echo "Đã tạo QR code tại: $QRCODE_PATH"
+echo
+echo "Để xem QR code trên terminal (nếu muốn):"
+echo "apt install -y fbi"
+echo "fbi $QRCODE_PATH"
+echo
+echo "Hoặc copy file QR code về máy của bạn bằng lệnh:"
+echo "scp user@${SERVER_IP}:$QRCODE_PATH /đường/dẫn/cục/bộ"

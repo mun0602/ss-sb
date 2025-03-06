@@ -1,146 +1,7 @@
-# Kiểm tra hệ thống có cài đặt Shadowsocks client để test không
-echo "===== Thử kết nối tự động ====="
-if command -v sslocal &> /dev/null; then
-  echo "Tìm thấy Shadowsocks client, thử kết nối..."
-  # Tạo file cấu hình tạm thời
-  SS_TEST_CONFIG="/tmp/ss_test_config.json"
-  cat > $SS_TEST_CONFIG << EOF
-{
-  "server": "$SERVER_IP",
-  "server_port": $PORT,
-  "password": "$PASSWORD",
-  "method": "$METHOD",
-  "local_address": "127.0.0.1",
-  "local_port": 1080,
-  "timeout": 300
-}
-EOF
-  
-  # Khởi động sslocal ở background
-  sslocal -c $SS_TEST_CONFIG -d start &>/dev/null
-  
-  # Thử kết nối qua proxy
-  echo "Thử kết nối đến google.com qua Shadowsocks..."
-  curl --socks5 127.0.0.1:1080 -s -m 5 https://www.google.com > /dev/null
-  if [ $? -eq 0 ]; then
-    echo "✅ Kết nối thành công! Shadowsocks hoạt động đúng."
-  else
-    echo "❌ Kết nối thất bại."
-  fi
-  
-  # Dừng sslocal
-  sslocal -d stop &>/dev/null
-  rm -f $SS_TEST_CONFIG
-else
-  echo "Không tìm thấy Shadowsocks client để test."
-  echo "Để kiểm tra kết nối, bạn có thể cài đặt Shadowsocks client:"
-  echo "pip3 install shadowsocks"
-fi# Thêm hướng dẫn cấu hình V2Ray để kết nối tới Shadowsocks
-cat > $WORK_DIR/v2ray_config_example.json << EOF
-{
-  "inbounds": [
-    {
-      "port": 1080,
-      "listen": "127.0.0.1",
-      "protocol": "socks",
-      "settings": {
-        "udp": true
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "protocol": "shadowsocks",
-      "settings": {
-        "servers": [
-          {
-            "address": "$SERVER_IP",
-            "port": $PORT,
-            "method": "$METHOD",
-            "password": "$PASSWORD"
-          }
-        ]
-      }
-    }
-  ]
-}
-EOF
-
-echo "Đã tạo ví dụ cấu hình V2Ray tại: $WORK_DIR/v2ray_config_example.json"
-echo
-echo "Để sử dụng với V2Ray, hãy sao chép nội dung file cấu hình này vào config.json của V2Ray"
-echo# Kiểm tra kết nối
-echo
-echo "===== Kiểm tra dịch vụ Shadowsocks ====="
-echo
-echo "Kiểm tra trạng thái dịch vụ:"
-systemctl status singbox | head -n 3
-echo
-echo "Kiểm tra cổng đang lắng nghe:"
-ss -tulpn | grep $PORT || echo "⚠️ Không phát hiện cổng $PORT đang lắng nghe"
-echo
-echo "Để kiểm tra đầy đủ, chạy script kiểm tra:"
-echo "sudo $WORK_DIR/check_ss.sh"
-echo# Tạo script kiểm tra kết nối
-cat > $WORK_DIR/check_ss.sh << EOF
 #!/bin/bash
 
-echo "===== Kiểm tra dịch vụ Shadowsocks ====="
-echo
-
-# Kiểm tra service có đang chạy
-if systemctl is-active --quiet singbox; then
-  echo "✅ Dịch vụ SingBox đang chạy"
-else
-  echo "❌ Dịch vụ SingBox KHÔNG chạy"
-  echo "Thử khởi động lại: sudo systemctl restart singbox"
-  echo "Kiểm tra logs: sudo journalctl -u singbox -f"
-  exit 1
-fi
-
-# Kiểm tra cổng có đang lắng nghe
-if netstat -tuln | grep -q ":$PORT "; then
-  echo "✅ Cổng $PORT đang được lắng nghe"
-else
-  echo "❌ Cổng $PORT KHÔNG được lắng nghe"
-  echo "Kiểm tra logs: sudo journalctl -u singbox -f"
-  exit 1
-fi
-
-# Kiểm tra kết nối từ localhost đến cổng
-timeout 5 curl --socks5 127.0.0.1:$PORT -s https://www.google.com > /dev/null
-if [ \$? -eq 0 ]; then
-  echo "✅ Kết nối từ localhost đến Shadowsocks thành công"
-else
-  echo "❌ Kết nối từ localhost đến Shadowsocks thất bại"
-fi
-
-# Kiểm tra tường lửa 
-if command -v ufw &> /dev/null && ufw status | grep -q "active"; then
-  if ufw status | grep -q "$PORT"; then
-    echo "✅ Cổng $PORT đã được mở trên UFW"
-  else
-    echo "❌ Cổng $PORT chưa được mở trên UFW"
-    echo "Chạy: sudo ufw allow $PORT/tcp && sudo ufw allow $PORT/udp"
-  fi
-fi
-
-echo
-echo "Thông tin cấu hình:"
-echo "Server: $SERVER_IP"
-echo "Port: $PORT"
-echo "Mật khẩu: $PASSWORD"
-echo "Phương thức mã hóa: $METHOD"
-echo
-echo "URL Shadowsocks: $SS_URI"
-echo
-echo "Cấu hình SingBox được lưu tại: $WORK_DIR/config.json"
-EOF
-
-chmod +x $WORK_DIR/check_ss.sh#!/bin/bash
-
-# Script cài đặt SingBox và tạo cấu hình Shadowsocks (SS) trên Ubuntu
-# Chạy script với quyền sudo: sudo bash install_singbox_ss.sh
+# Script cài đặt Shadowsocks đơn giản trên Ubuntu
+# Chạy với quyền sudo: sudo bash install_ss.sh
 
 # Kiểm tra quyền root
 if [ "$EUID" -ne 0 ]; then
@@ -148,173 +9,178 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# Màu sắc để hiển thị
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
 # Cập nhật danh sách gói phần mềm
-echo "===== Cập nhật danh sách gói phần mềm ====="
-apt update
+echo -e "${YELLOW}[1] Cập nhật danh sách gói phần mềm...${NC}"
+apt update -q
 
-# Cài đặt các công cụ cần thiết
-echo "===== Cài đặt các công cụ cần thiết ====="
-apt install -y curl wget unzip jq qrencode
+# Cài đặt các gói cần thiết
+echo -e "${YELLOW}[2] Cài đặt các gói cần thiết...${NC}"
+apt install -y -q python3-pip net-tools curl wget qrencode
 
-# Tạo thư mục làm việc
-WORK_DIR="/opt/singbox"
-mkdir -p $WORK_DIR
-cd $WORK_DIR
+# Cài đặt Shadowsocks thông qua pip
+echo -e "${YELLOW}[3] Cài đặt Shadowsocks...${NC}"
+pip3 install shadowsocks
 
-# Tải SingBox từ URL được chỉ định
-echo "===== Tải SingBox từ URL được chỉ định ====="
-DOWNLOAD_URL="https://dtdp.bio/wp-content/apk/git/sing-box-1.11.4-linux-amd64.tar.gz"
+# Tạo thư mục cấu hình
+CONF_DIR="/etc/shadowsocks"
+mkdir -p $CONF_DIR
 
-wget -O singbox.tar.gz $DOWNLOAD_URL
-tar -xzf singbox.tar.gz
-mv sing-box-1.11.4-linux-amd64/* ./
-rm -rf sing-box-1.11.4-linux-amd64 singbox.tar.gz
-
-# Cấu hình SingBox
-echo "===== Cấu hình SingBox ====="
-
-# Tạo mật khẩu ngẫu nhiên (16 ký tự an toàn)
+# Tạo mật khẩu ngẫu nhiên (16 ký tự)
 PASSWORD=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
-# Chọn cổng ngẫu nhiên (10000-65000)
-PORT=$(shuf -i 10000-65000 -n 1)
+
+# Chọn cổng ngẫu nhiên (10000-60000)
+PORT=$(shuf -i 10000-60000 -n 1)
+
 # Lấy địa chỉ IP công khai
 SERVER_IP=$(curl -s https://api.ipify.org)
 
+# Chọn phương thức mã hóa
+METHOD="aes-256-cfb"  # Phương thức mã hóa phổ biến, tương thích tốt với hầu hết các client
+
 # Tạo file cấu hình
-cat > $WORK_DIR/config.json << EOF
+echo -e "${YELLOW}[4] Tạo cấu hình Shadowsocks...${NC}"
+CONFIG_FILE="$CONF_DIR/config.json"
+
+cat > $CONFIG_FILE << EOF
 {
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "shadowsocks",
-      "tag": "ss-in",
-      "listen": "0.0.0.0",
-      "listen_port": $PORT,
-      "method": "chacha20-ietf-poly1305",
-      "password": "$PASSWORD",
-      "network": "tcp,udp"
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "geoip": "private",
-        "outbound": "direct"
-      }
-    ],
-    "final": "direct"
-  }
+  "server": "0.0.0.0",
+  "server_port": $PORT,
+  "password": "$PASSWORD",
+  "method": "$METHOD",
+  "timeout": 300,
+  "fast_open": true
 }
 EOF
 
-# Tạo service systemd
-cat > /etc/systemd/system/singbox.service << EOF
+# Tạo service file
+echo -e "${YELLOW}[5] Tạo systemd service...${NC}"
+SERVICE_FILE="/etc/systemd/system/shadowsocks.service"
+
+cat > $SERVICE_FILE << EOF
 [Unit]
-Description=SingBox Service
+Description=Shadowsocks Server
 After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=$WORK_DIR
-ExecStart=$WORK_DIR/sing-box run -c $WORK_DIR/config.json
+ExecStart=/usr/local/bin/ssserver -c $CONFIG_FILE
 Restart=on-failure
-RestartSec=10
-LimitNOFILE=infinity
+RestartSec=5
+LimitNOFILE=32768
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Cấp quyền thực thi
-chmod +x $WORK_DIR/sing-box
+# Mở cổng trên tường lửa
+echo -e "${YELLOW}[6] Cấu hình tường lửa...${NC}"
 
-# Khởi động service
+# Kiểm tra và mở cổng với UFW
+if command -v ufw &> /dev/null && ufw status | grep -q "active"; then
+  echo "Mở cổng $PORT trong UFW..."
+  ufw allow $PORT/tcp
+  ufw allow $PORT/udp
+fi
+
+# Mở cổng với iptables
+echo "Mở cổng $PORT trong iptables..."
+iptables -I INPUT -p tcp --dport $PORT -j ACCEPT
+iptables -I INPUT -p udp --dport $PORT -j ACCEPT
+
+# Khởi động dịch vụ
+echo -e "${YELLOW}[7] Khởi động dịch vụ Shadowsocks...${NC}"
 systemctl daemon-reload
-systemctl enable singbox
-systemctl start singbox
+systemctl enable shadowsocks
+systemctl start shadowsocks
 
-# Yêu cầu người dùng nhập tên cho kết nối
-echo
-echo "Nhập tên cho kết nối Shadowsocks của bạn (để trống nếu không muốn đặt tên):"
+# Kiểm tra trạng thái dịch vụ
+sleep 3
+if systemctl is-active --quiet shadowsocks; then
+  echo -e "${GREEN}✅ Dịch vụ Shadowsocks đã được khởi động thành công!${NC}"
+else
+  echo -e "${RED}❌ Không thể khởi động dịch vụ Shadowsocks.${NC}"
+  echo "Xem logs: systemctl status shadowsocks"
+  exit 1
+fi
+
+# Kiểm tra cổng
+if netstat -tuln | grep -q ":$PORT "; then
+  echo -e "${GREEN}✅ Cổng $PORT đang được lắng nghe.${NC}"
+else
+  echo -e "${RED}❌ Cổng $PORT không được lắng nghe.${NC}"
+  echo "Kiểm tra logs: journalctl -u shadowsocks -f"
+  exit 1
+fi
+
+# Tạo URL Shadowsocks
+echo -e "${YELLOW}[8] Tạo thông tin kết nối...${NC}"
+
+# Yêu cầu người dùng nhập tên
+echo -e "${YELLOW}Nhập tên cho kết nối Shadowsocks (để trống nếu không cần):${NC}"
 read -r SS_NAME
 
-# Tạo SS URL tương thích v2ray (sử dụng định dạng chuẩn)
-METHOD="chacha20-ietf-poly1305"
+# Tạo URL
 USER_PASS="${METHOD}:${PASSWORD}"
-BASE64_PART=$(echo -n "$USER_PASS" | base64 | tr -d '\n' | tr -d '=' | tr '+/' '-_')
+BASE64_USER_PASS=$(echo -n "$USER_PASS" | base64 | tr -d '\n')
 
 if [ -n "$SS_NAME" ]; then
   # URL encode tên
-  ENCODED_NAME=$(echo -n "$SS_NAME" | jq -sRr @uri)
-  SS_URI="ss://${BASE64_PART}@${SERVER_IP}:${PORT}#${ENCODED_NAME}"
+  ENCODED_NAME=$(echo -n "$SS_NAME" | tr -d '\n' | xxd -plain | sed 's/\(..\)/%\1/g')
+  SS_URI="ss://${BASE64_USER_PASS}@${SERVER_IP}:${PORT}#${ENCODED_NAME}"
 else
-  SS_URI="ss://${BASE64_PART}@${SERVER_IP}:${PORT}"
+  SS_URI="ss://${BASE64_USER_PASS}@${SERVER_IP}:${PORT}"
 fi
 
 # Tạo QR code
-QRCODE_PATH="$WORK_DIR/ss_qrcode.png"
+QRCODE_PATH="/tmp/ss_qrcode.png"
 qrencode -s 8 -o "$QRCODE_PATH" "$SS_URI"
 
-# In thông tin
-echo
-echo "===== SingBox với Shadowsocks đã được cài đặt thành công! ====="
-echo
-echo "Thông tin Shadowsocks:"
-echo "Server: $SERVER_IP"
-echo "Port: $PORT"
-echo "Mật khẩu: $PASSWORD"
-echo "Phương thức mã hóa: $METHOD"
+# Hiển thị QR code trực tiếp trong terminal
+echo -e "${YELLOW}[9] Hiển thị QR code để quét:${NC}"
+qrencode -t ANSI "$SS_URI"
+
+# Tạo script để hiển thị thông tin kết nối
+INFO_SCRIPT="/usr/local/bin/ss-info"
+cat > $INFO_SCRIPT << EOF
+#!/bin/bash
+echo "============================================"
+echo "🔐 Thông tin kết nối Shadowsocks 🔐"
+echo "============================================"
+echo "◉ Server: $SERVER_IP"
+echo "◉ Port: $PORT"
+echo "◉ Mật khẩu: $PASSWORD"
+echo "◉ Phương thức mã hóa: $METHOD"
 if [ -n "$SS_NAME" ]; then
-  echo "Tên kết nối: $SS_NAME"
+  echo "◉ Tên kết nối: $SS_NAME"
 fi
-echo
-echo "URL Shadowsocks: $SS_URI"
-echo
-echo "Để kiểm tra trạng thái: systemctl status singbox"
-echo "Để xem logs: journalctl -u singbox -f"
-echo
-echo "Cấu hình SingBox được lưu tại: $WORK_DIR/config.json"
-echo
+echo "◉ URL: $SS_URI"
+echo "============================================"
+echo "📱 QR Code hiển thị ở trên (quét bằng ứng dụng Shadowsocks trên điện thoại)"
+echo "📱 QR Code cũng được lưu tại: $QRCODE_PATH"
+echo "🔄 Kiểm tra trạng thái: systemctl status shadowsocks"
+echo "📋 Logs: journalctl -u shadowsocks -f"
+echo "🛠️ Cấu hình: $CONFIG_FILE"
+echo "============================================"
+EOF
 
-# Kiểm tra cài đặt tường lửa và mở cổng
-echo "===== Kiểm tra và cấu hình tường lửa ====="
-# Kiểm tra và mở cổng với UFW nếu đang chạy
-if command -v ufw &> /dev/null && ufw status | grep -q "active"; then
-  echo "UFW đang hoạt động, mở cổng $PORT..."
-  ufw allow $PORT/tcp
-  ufw allow $PORT/udp
-  echo "Đã mở cổng $PORT trên UFW firewall"
-fi
+chmod +x $INFO_SCRIPT
 
-# Kiểm tra và mở cổng với iptables
-if command -v iptables &> /dev/null; then
-  echo "Mở cổng $PORT trên iptables..."
-  iptables -I INPUT -p tcp --dport $PORT -j ACCEPT
-  iptables -I INPUT -p udp --dport $PORT -j ACCEPT
-  echo "Đã mở cổng $PORT trên iptables"
-  
-  # Lưu cấu hình iptables nếu có iptables-save
-  if command -v iptables-save &> /dev/null; then
-    iptables-save > /etc/iptables/rules.v4 2>/dev/null || iptables-save > /etc/iptables.rules 2>/dev/null || echo "Không thể lưu quy tắc iptables"
-  fi
+# In thông tin kết nối
+$INFO_SCRIPT
+
+# Kiểm tra kết nối tới Google 
+echo -e "${YELLOW}[9] Kiểm tra kết nối internet...${NC}"
+if curl -s --max-time 5 https://www.google.com > /dev/null; then
+  echo -e "${GREEN}✅ Máy chủ có kết nối internet!${NC}"
+else
+  echo -e "${RED}⚠️ Không thể kết nối tới Google. Vui lòng kiểm tra kết nối internet.${NC}"
 fi
 
-# Hiển thị thông tin QR code
-echo "Đã tạo QR code tại: $QRCODE_PATH"
-echo
-echo "Để xem QR code trên terminal (nếu muốn):"
-echo "apt install -y fbi"
-echo "fbi $QRCODE_PATH"
-echo
-echo "Hoặc copy file QR code về máy của bạn bằng lệnh:"
-echo "scp user@${SERVER_IP}:$QRCODE_PATH /đường/dẫn/cục/bộ"
+echo -e "${GREEN}Cài đặt hoàn tất!${NC}"
+echo -e "${YELLOW}Để xem lại thông tin kết nối, chạy: ss-info${NC}"

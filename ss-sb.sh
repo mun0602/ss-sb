@@ -1,4 +1,143 @@
+# Kiểm tra hệ thống có cài đặt Shadowsocks client để test không
+echo "===== Thử kết nối tự động ====="
+if command -v sslocal &> /dev/null; then
+  echo "Tìm thấy Shadowsocks client, thử kết nối..."
+  # Tạo file cấu hình tạm thời
+  SS_TEST_CONFIG="/tmp/ss_test_config.json"
+  cat > $SS_TEST_CONFIG << EOF
+{
+  "server": "$SERVER_IP",
+  "server_port": $PORT,
+  "password": "$PASSWORD",
+  "method": "$METHOD",
+  "local_address": "127.0.0.1",
+  "local_port": 1080,
+  "timeout": 300
+}
+EOF
+  
+  # Khởi động sslocal ở background
+  sslocal -c $SS_TEST_CONFIG -d start &>/dev/null
+  
+  # Thử kết nối qua proxy
+  echo "Thử kết nối đến google.com qua Shadowsocks..."
+  curl --socks5 127.0.0.1:1080 -s -m 5 https://www.google.com > /dev/null
+  if [ $? -eq 0 ]; then
+    echo "✅ Kết nối thành công! Shadowsocks hoạt động đúng."
+  else
+    echo "❌ Kết nối thất bại."
+  fi
+  
+  # Dừng sslocal
+  sslocal -d stop &>/dev/null
+  rm -f $SS_TEST_CONFIG
+else
+  echo "Không tìm thấy Shadowsocks client để test."
+  echo "Để kiểm tra kết nối, bạn có thể cài đặt Shadowsocks client:"
+  echo "pip3 install shadowsocks"
+fi# Thêm hướng dẫn cấu hình V2Ray để kết nối tới Shadowsocks
+cat > $WORK_DIR/v2ray_config_example.json << EOF
+{
+  "inbounds": [
+    {
+      "port": 1080,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [
+          {
+            "address": "$SERVER_IP",
+            "port": $PORT,
+            "method": "$METHOD",
+            "password": "$PASSWORD"
+          }
+        ]
+      }
+    }
+  ]
+}
+EOF
+
+echo "Đã tạo ví dụ cấu hình V2Ray tại: $WORK_DIR/v2ray_config_example.json"
+echo
+echo "Để sử dụng với V2Ray, hãy sao chép nội dung file cấu hình này vào config.json của V2Ray"
+echo# Kiểm tra kết nối
+echo
+echo "===== Kiểm tra dịch vụ Shadowsocks ====="
+echo
+echo "Kiểm tra trạng thái dịch vụ:"
+systemctl status singbox | head -n 3
+echo
+echo "Kiểm tra cổng đang lắng nghe:"
+ss -tulpn | grep $PORT || echo "⚠️ Không phát hiện cổng $PORT đang lắng nghe"
+echo
+echo "Để kiểm tra đầy đủ, chạy script kiểm tra:"
+echo "sudo $WORK_DIR/check_ss.sh"
+echo# Tạo script kiểm tra kết nối
+cat > $WORK_DIR/check_ss.sh << EOF
 #!/bin/bash
+
+echo "===== Kiểm tra dịch vụ Shadowsocks ====="
+echo
+
+# Kiểm tra service có đang chạy
+if systemctl is-active --quiet singbox; then
+  echo "✅ Dịch vụ SingBox đang chạy"
+else
+  echo "❌ Dịch vụ SingBox KHÔNG chạy"
+  echo "Thử khởi động lại: sudo systemctl restart singbox"
+  echo "Kiểm tra logs: sudo journalctl -u singbox -f"
+  exit 1
+fi
+
+# Kiểm tra cổng có đang lắng nghe
+if netstat -tuln | grep -q ":$PORT "; then
+  echo "✅ Cổng $PORT đang được lắng nghe"
+else
+  echo "❌ Cổng $PORT KHÔNG được lắng nghe"
+  echo "Kiểm tra logs: sudo journalctl -u singbox -f"
+  exit 1
+fi
+
+# Kiểm tra kết nối từ localhost đến cổng
+timeout 5 curl --socks5 127.0.0.1:$PORT -s https://www.google.com > /dev/null
+if [ \$? -eq 0 ]; then
+  echo "✅ Kết nối từ localhost đến Shadowsocks thành công"
+else
+  echo "❌ Kết nối từ localhost đến Shadowsocks thất bại"
+fi
+
+# Kiểm tra tường lửa 
+if command -v ufw &> /dev/null && ufw status | grep -q "active"; then
+  if ufw status | grep -q "$PORT"; then
+    echo "✅ Cổng $PORT đã được mở trên UFW"
+  else
+    echo "❌ Cổng $PORT chưa được mở trên UFW"
+    echo "Chạy: sudo ufw allow $PORT/tcp && sudo ufw allow $PORT/udp"
+  fi
+fi
+
+echo
+echo "Thông tin cấu hình:"
+echo "Server: $SERVER_IP"
+echo "Port: $PORT"
+echo "Mật khẩu: $PASSWORD"
+echo "Phương thức mã hóa: $METHOD"
+echo
+echo "URL Shadowsocks: $SS_URI"
+echo
+echo "Cấu hình SingBox được lưu tại: $WORK_DIR/config.json"
+EOF
+
+chmod +x $WORK_DIR/check_ss.sh#!/bin/bash
 
 # Script cài đặt SingBox và tạo cấu hình Shadowsocks (SS) trên Ubuntu
 # Chạy script với quyền sudo: sudo bash install_singbox_ss.sh
@@ -147,11 +286,27 @@ echo
 echo "Cấu hình SingBox được lưu tại: $WORK_DIR/config.json"
 echo
 
-# Mở cổng trên firewall nếu có UFW
-if command -v ufw &> /dev/null; then
+# Kiểm tra cài đặt tường lửa và mở cổng
+echo "===== Kiểm tra và cấu hình tường lửa ====="
+# Kiểm tra và mở cổng với UFW nếu đang chạy
+if command -v ufw &> /dev/null && ufw status | grep -q "active"; then
+  echo "UFW đang hoạt động, mở cổng $PORT..."
   ufw allow $PORT/tcp
   ufw allow $PORT/udp
   echo "Đã mở cổng $PORT trên UFW firewall"
+fi
+
+# Kiểm tra và mở cổng với iptables
+if command -v iptables &> /dev/null; then
+  echo "Mở cổng $PORT trên iptables..."
+  iptables -I INPUT -p tcp --dport $PORT -j ACCEPT
+  iptables -I INPUT -p udp --dport $PORT -j ACCEPT
+  echo "Đã mở cổng $PORT trên iptables"
+  
+  # Lưu cấu hình iptables nếu có iptables-save
+  if command -v iptables-save &> /dev/null; then
+    iptables-save > /etc/iptables/rules.v4 2>/dev/null || iptables-save > /etc/iptables.rules 2>/dev/null || echo "Không thể lưu quy tắc iptables"
+  fi
 fi
 
 # Hiển thị thông tin QR code
